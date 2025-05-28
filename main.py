@@ -87,12 +87,17 @@ def main():
         for agent in market.agents:
             if not agent.is_alive:
                 continue
+            
+            # DEBUG: Show what agent sees at their current position
+            x, y = agent.position
+            current_cell = market.grid[y][x]
+            print(f"🔍 {agent.name} at {agent.position}: Red food: {current_cell['red_food']}, Green food: {current_cell['green_food']}, Energy: {agent.energy}")
                 
             # Get decision from the agent
             decision, raw_response = agent.decide_action(market)
             
             # Skip dead agents
-            if decision["action"] == "DEAD":
+            if decision["type"] == "ACTION" and decision.get("action") == "DEAD":
                 continue
             
             # Debug output - limited to first 100 chars for readability
@@ -108,7 +113,10 @@ def main():
                     direction = action.split()[-1]
                     old_pos = agent.position
                     market.move_agent(agent, direction)
-                    print(f"🚶 {agent.name} moved {direction} from {old_pos} to {agent.position}")
+                    if agent.position != old_pos:
+                        print(f"🚶 {agent.name} moved {direction} from {old_pos} to {agent.position}")
+                    else:
+                        print(f"🚫 {agent.name} tried to move {direction} but hit boundary at {old_pos}")
                 
                 elif action == "GATHER":
                     energy_gained = market.gather_resources(agent)

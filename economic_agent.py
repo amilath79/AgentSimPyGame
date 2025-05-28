@@ -8,11 +8,11 @@ class EconomicAgent:
         self.name = name
         self.persona = persona
         self.position = (0, 0)
-        self.food = 0
+        self.food = 50
         self.latest_action = None
         self.latest_trade = None
         self.energy = 50  # Changed from food to energy, starting with 50 energy
-        self.energy_loss_per_turn = 2  # Fixed energy consumption per turn
+        self.energy_loss_per_turn = 1  # Fixed energy consumption per turn
         self.is_alive = True  # Track if agent is alive
 
 

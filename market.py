@@ -92,14 +92,17 @@ class Market:
         return total_energy_gained
 
     def nearby_market_context(self, agent):
-        # Get information about nearby cells
+        # Get information about nearby cells (including current cell)
         x, y = agent.position
         context = {}
         for dy in [-1, 0, 1]:
             for dx in [-1, 0, 1]:
                 nx, ny = x + dx, y + dy
                 if 0 <= nx < self.width and 0 <= ny < self.height:
-                    context[(nx, ny)] = self.grid[ny][nx]
+                    context[(nx, ny)] = {
+                        "red_food": self.grid[ny][nx]["red_food"],
+                        "green_food": self.grid[ny][nx]["green_food"]
+                    }
         return context
 
     def nearby_agents(self, agent, distance=2):
