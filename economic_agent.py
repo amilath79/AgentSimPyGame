@@ -11,8 +11,24 @@ class EconomicAgent:
         self.food = 0
         self.latest_action = None
         self.latest_trade = None
+        self.energy = 50  # Changed from food to energy, starting with 50 energy
+        self.energy_loss_per_turn = 2  # Fixed energy consumption per turn
+        self.is_alive = True  # Track if agent is alive
+
+
+    def lose_energy_per_turn(self):
+        """Called each turn to deduct energy. Agent dies if energy <= 0"""
+        if self.is_alive:
+            self.energy -= self.energy_loss_per_turn
+            if self.energy <= 0:
+                self.is_alive = False
+                print(f"💀 {self.name} has died from lack of energy!")
     
     def decide_action(self, market):
+        # Skip decision if agent is dead
+        if not self.is_alive:
+            return {"type": "ACTION", "action": "DEAD"}, "Agent is dead"
+        
         # Get context about nearby resources and agents
         market_context = market.nearby_market_context(self)
         nearby_agents = market.nearby_agents(self)
@@ -21,43 +37,59 @@ class EconomicAgent:
         agent_yaml = yaml.dump({
             "name": self.name,
             "position": self.position,
-            "food": self.food,
+            "energy": self.energy,  # Changed from food
+            "energy_loss_per_turn": self.energy_loss_per_turn,
             "persona": self.persona
         }, sort_keys=False)
         
-        market_yaml = yaml.dump({str(pos): resources for pos, resources in market_context.items() if resources["food"] > 0}, sort_keys=False)
         
+        # Update market context to show red and green food
+        market_yaml = yaml.dump({
+            str(pos): {
+                "red_food": resources["red_food"], 
+                "green_food": resources["green_food"]
+            } for pos, resources in market_context.items() 
+            if resources["red_food"] > 0 or resources["green_food"] > 0
+        }, sort_keys=False)
+        
+
         nearby_agents_yaml = yaml.dump({
             a.name: {
                 "position": a.position,
-                "food": a.food,
+                "energy": a.energy,  # Changed from food
                 "persona": a.persona
-            } for a in nearby_agents
+            } for a in nearby_agents if a.is_alive
         }, sort_keys=False) if nearby_agents else "None"
         
         # Build the prompt for Gemini
         prompt = f"""
-            You are an economic agent in a 9x9 grid simulation.
+            You are an economic agent in a 9x9 grid simulation with an ENERGY SYSTEM.
 
             Your Profile:
             {agent_yaml}
 
-            Nearby Market Cells With Resources:
+            ENERGY RULES:
+            - You lose {self.energy_loss_per_turn} energy every turn
+            - You DIE if your energy reaches 0 or below
+            - Red food gives 50 energy when gathered
+            - Green food gives 5 energy when gathered
+
+            Nearby Market Cells With Food:
             {market_yaml}
 
             Nearby Agents:
             {nearby_agents_yaml}
 
-            IMPORTANT: You should ALWAYS choose to move, gather, or trade if possible. WAIT should only be used as a last resort.
+            CRITICAL: You must maintain your energy above 0 to survive! Prioritize gathering food if your energy is low.
 
             Available Actions:
-            - MOVE UP / MOVE DOWN / MOVE LEFT / MOVE RIGHT (Choose a direction toward food or unexplored areas)
-            - GATHER (Use this when you are on a cell with food)
+            - MOVE UP / MOVE DOWN / MOVE LEFT / MOVE RIGHT (Choose a direction toward food)
+            - GATHER (Use this when you are on a cell with red_food or green_food)
             - WAIT (Only use if no other action makes sense)
 
-            If there's a nearby agent and you want to trade, respond with:
+            If there's a nearby agent and you want to trade energy, respond with:
             <TRADE_OFFER>
-            offer: [amount] food
+            offer: [amount] energy
             to: [agent_name]
             </TRADE_OFFER>
 
@@ -67,16 +99,17 @@ class EconomicAgent:
             </ACTION>
 
             STRATEGY HINTS:
-            - If you see food in an adjacent cell, MOVE toward it
-            - If there's food in your current cell, GATHER it
-            - If you don't see any resources nearby, MOVE in a random direction to explore
-            - "{self.persona}" agents should be especially active in finding resources
-
-            IMPORTANT TRADING INSTRUCTIONS:
-            - If you are near another agent, strongly consider making a trade offer
-            - Trading is always beneficial compared to waiting
-            - If you have 2 or more food, you should try to trade 1 food with a nearby agent
+            - If you see red food (50 energy), prioritize it over green food (5 energy)
+            - If your energy is below 10, focus entirely on survival - find food immediately
+            - If you don't see any food nearby, MOVE in a direction to explore
+            - Consider your energy loss rate when making decisions
             """
+        
+        # Call Gemini and parse the response
+        response = call_gemini(prompt)
+        decision = self.parse_action(response)
+        self.latest_action = decision
+        return decision, response
         
         # Call Gemini and parse the response
         response = call_gemini(prompt)
@@ -94,7 +127,7 @@ class EconomicAgent:
                 trade_match = re.search(r"<TRADE_OFFER>(.*?)</TRADE_OFFER>", response_text, re.DOTALL)
                 if trade_match:
                     trade_text = trade_match.group(1).strip()
-                    offer_match = re.search(r"offer:\s*(\d+)\s*food", trade_text)
+                    offer_match = re.search(r"offer:\s*(\d+)\s*energy", trade_text)
                     to_match = re.search(r"to:\s*(\w+)", trade_text)
                     
                     if offer_match and to_match:
@@ -121,32 +154,39 @@ class EconomicAgent:
             return {"type": "ACTION", "action": "WAIT"}
     
     def evaluate_trade(self, offer, from_agent):
+        # Only evaluate trades if alive
+        if not self.is_alive:
+            return False, "Agent is dead"
+            
         # Make a decision about a trade offer
         prompt = f"""
-You are {self.name}, an economic agent with the persona: {self.persona}.
+        You are {self.name}, an economic agent with the persona: {self.persona}.
 
-You have {self.food} food.
+        ENERGY SYSTEM:
+        - You currently have {self.energy} energy
+        - You lose {self.energy_loss_per_turn} energy per turn
+        - You DIE if energy reaches 0
 
-{from_agent.name} (persona: {from_agent.persona}) is offering you a trade:
-- They want to give you: {offer['amount']} food
+        {from_agent.name} (persona: {from_agent.persona}) is offering you a trade:
+        - They want to give you: {offer['amount']} energy
 
-Decide whether to ACCEPT or REJECT this offer based on your needs and persona.
-Reply with either:
+        Decide whether to ACCEPT or REJECT this offer based on your energy needs and survival.
+        Reply with either:
 
-<DECISION>
-ACCEPT
-</DECISION>
+        <DECISION>
+        ACCEPT
+        </DECISION>
 
-OR
+        OR
 
-<DECISION>
-REJECT
-</DECISION>
+        <DECISION>
+        REJECT
+        </DECISION>
 
-<REASON>
-Brief explanation for your decision
-</REASON>
-"""
+        <REASON>
+        Brief explanation for your decision
+        </REASON>
+        """
         
         response = call_gemini(prompt)
         
